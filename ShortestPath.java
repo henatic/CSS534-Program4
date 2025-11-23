@@ -12,71 +12,71 @@ import java.util.*;
  * CSS534 HW4 Based on Collin Gordon's BFS on 9/26/18
  */
 public class ShortestPath {
-    public static void main(String[] args) {
-	// validate arguments.
-	if ( args.length < 3 ) {
-            System.out.println("Usage: filename source destinatioin");
-            System.exit(-1);
-	}
-
-	// start Sparks and read a given input file
-	String inputFile = args[0];
-        SparkConf conf = new SparkConf( ).setAppName( "BFS-based Shortest Path Search" );
-        JavaSparkContext jsc = new JavaSparkContext( conf );
-	JavaRDD<String> lines = jsc.textFile( inputFile );
-
-	// now start a timer
-	System.err.println( "Timer got started." );
-	long startTime = System.currentTimeMillis();
-
-	// define two global variables
-	LongAccumulator active = jsc.sc( ).longAccumulator( );            // # active nodes
-	final Broadcast<String> sourceId = jsc.broadcast( args[1] );      // source node id
-	final Broadcast<String> destinationId = jsc.broadcast( args[2] ); // dest node id
-
-	// create the initial network information
-	JavaPairRDD<String, Data> network = lines.mapToPair( line -> {
-		// identify each node name
-		String[] tokens = line.split("=");
-		String node = tokens[0];
-
-		// create a list of (neighbor_node, distance) pairs
-		String[] nbrNodeDistPairs  = tokens[1].split(";");
-		List<Tuple2<String,Integer>> neighbors = new ArrayList<Tuple2<String,Integer>>( );
-		for ( int i = 0; i < nbrNodeDistPairs.length; i++ ) {
-		    String[] pair = nbrNodeDistPairs[i].split(",");
-		    Tuple2<String,Integer> tuple = new Tuple2<>( pair[0], Integer.valueOf( pair[1] ) );
-		    neighbors.add( tuple );
+	public static void main(String[] args) {
+		// validate arguments.
+		if (args.length < 3) {
+			System.out.println("Usage: filename source destinatioin");
+			System.exit(-1);
 		}
 
-		// initialize the node's attributes
-		Integer distance = Integer.MAX_VALUE;
-		String status = "INACTIVE";
-		if ( node.equals( sourceId.value( ) ) ) {
-		    distance = 0;
-		    status = "ACTIVE";
-		    active.add( 1 );
-		} 
-		
-		// return each node's information
-		return new Tuple2<>( node, new Data( neighbors, distance, distance, status ) );
-	    });
+		// start Sparks and read a given input file
+		String inputFile = args[0];
+		SparkConf conf = new SparkConf().setAppName("BFS-based Shortest Path Search");
+		JavaSparkContext jsc = new JavaSparkContext(conf);
+		JavaRDD<String> lines = jsc.textFile(inputFile);
 
-	// just for debugging
-	System.err.println( "Initial Network:" );
-	network.collect( );
+		// now start a timer
+		System.err.println("Timer got started.");
+		long startTime = System.currentTimeMillis();
 
-	int steps = 0;
-        // Start while loop if there is an active vertex in the network
-        while (network.filter(d -> d._2().status.equals("ACTIVE")).count() > 0) {
-            JavaPairRDD<String, Data> propagatedNetwork = network.flatMapToPair(vertex -> {
-                // If a vertex is “ACTIVE”, create Tuple2( neighbor, new Data( … ) ) for
-                // each neighbor where Data should include a new distance to this neighbor.
-                // Add each Tuple2 to a list. Don’t forget this vertex itself back to the
-                // list. Return all the list items.
-				if(vertex._2().status.equals("ACTIVE")) {
+		// define two global variables
+		LongAccumulator active = jsc.sc().longAccumulator(); // # active nodes
+		final Broadcast<String> sourceId = jsc.broadcast(args[1]); // source node id
+		final Broadcast<String> destinationId = jsc.broadcast(args[2]); // dest node id
+
+		// create the initial network information
+		JavaPairRDD<String, Data> network = lines.mapToPair(line -> {
+			// identify each node name
+			String[] tokens = line.split("=");
+			String node = tokens[0];
+
+			// create a list of (neighbor_node, distance) pairs
+			String[] nbrNodeDistPairs = tokens[1].split(";");
+			List<Tuple2<String, Integer>> neighbors = new ArrayList<Tuple2<String, Integer>>();
+			for (int i = 0; i < nbrNodeDistPairs.length; i++) {
+				String[] pair = nbrNodeDistPairs[i].split(",");
+				Tuple2<String, Integer> tuple = new Tuple2<>(pair[0], Integer.valueOf(pair[1]));
+				neighbors.add(tuple);
+			}
+
+			// initialize the node's attributes
+			Integer distance = Integer.MAX_VALUE;
+			String status = "INACTIVE";
+			if (node.equals(sourceId.value())) {
+				distance = 0;
+				status = "ACTIVE";
+				active.add(1);
+			}
+
+			// return each node's information
+			return new Tuple2<>(node, new Data(neighbors, distance, distance, status));
+		});
+
+		// just for debugging
+		System.err.println("Initial Network:");
+		network.collect();
+
+		int steps = 0;
+		// Start while loop if there is an active vertex in the network
+		while (network.filter(d -> d._2().status.equals("ACTIVE")).count() > 0) {
+			JavaPairRDD<String, Data> propagatedNetwork = network.flatMapToPair(vertex -> {
+				// If a vertex is “ACTIVE”, create Tuple2( neighbor, new Data( … ) ) for
+				// each neighbor where Data should include a new distance to this neighbor.
+				// Add each Tuple2 to a list. Don’t forget this vertex itself back to the
+				// list. Return all the list items.
+				if (vertex._2().status.equals("ACTIVE")) {
 					List<Tuple2<String, Data>> results = new ArrayList<>();
-					for(Tuple2<String, Integer> neighbor : vertex._2().neighbors) {
+					for (Tuple2<String, Integer> neighbor : vertex._2().neighbors) {
 						Integer newDistance = vertex._2().distance + neighbor._2();
 						Data newData = new Data(null, newDistance, vertex._2().distance, "INACTIVE");
 						results.add(new Tuple2<>(neighbor._1(), newData));
@@ -88,20 +88,12 @@ public class ShortestPath {
 					// If the vertex is not active, just return itself
 					return Collections.singletonList(new Tuple2<>(vertex._1(), vertex._2())).iterator();
 				}
-            });
+			});
 
-            network = propagatedNetwork.reduceByKey((k1, k2) -> {
-                // For each key, (i.e., each vertex), find the shortest distance and
-                // update this vertex’ Data attribute.
+			network = propagatedNetwork.reduceByKey((k1, k2) -> {
+				// For each key, (i.e., each vertex), find the shortest distance and
+				// update this vertex’ Data attribute.
 				Data returnData = new Data(new ArrayList<>(), Integer.MAX_VALUE, Integer.MAX_VALUE, "INACTIVE");
-
-				// if (k1.neighbors != null && k1.neighbors.size() > 0) {
-				// 	networkData = k1;
-				// 	propagatedData = k2;
-				// } else {
-				// 	networkData = k2;
-				// 	propagatedData = k1;
-				// }
 
 				if (k1.distance < k2.distance) {
 					returnData.distance = k1.distance;
@@ -114,8 +106,7 @@ public class ShortestPath {
 				if (k1.neighbors != null && k1.neighbors.size() > 0) {
 					returnData.neighbors = k1.neighbors;
 					returnData.prev = k1.prev;
-				}
-				else //if (k2.neighbors != null && k2.neighbors.size() > 0)
+				} else // if (k2.neighbors != null && k2.neighbors.size() > 0)
 				{
 					returnData.neighbors = k2.neighbors;
 					returnData.prev = k2.prev;
@@ -125,35 +116,34 @@ public class ShortestPath {
 				// give this prev to returnData if found
 
 				return returnData;
-            });
+			});
 
-            network = network.mapValues(value -> {
-                // If a vertex’ new distance is shorter than prev, activate this vertex
-                // status and replace prev with the new distance.
-                if (value.distance < value.prev) {
-                    return new Data(value.neighbors, value.distance, value.distance, "ACTIVE");
-                } else {
-                    return new Data(value.neighbors, value.distance, value.prev, "INACTIVE");
-                }
-            });
+			network = network.mapValues(value -> {
+				// If a vertex’ new distance is shorter than prev, activate this vertex
+				// status and replace prev with the new distance.
+				if (value.distance < value.prev) {
+					return new Data(value.neighbors, value.distance, value.distance, "ACTIVE");
+				} else {
+					return new Data(value.neighbors, value.distance, value.prev, "INACTIVE");
+				}
+			});
 
-	    // just for debugging
-            System.err.println( "\nUpdated Network: " + ( steps++ ) );
-            network.collect( );
-        }
+			// just for debugging
+			System.err.println("\nUpdated Network: " + (steps++));
+			network.collect();
+		}
 
-	    
-	// get the distance from source to destination
-	Tuple2<String, Data> destNode  = network.filter( entry -> {
-                String myNode = entry._1( );
-                return myNode.equals( destinationId.value( ) );
-            } ).collect( ).iterator( ).next( );
-	System.err.println( "from " + sourceId.value( ) + " to " + destNode._1( ) +
-	                    " takes distance = " + destNode._2( ).distance );
+		// get the distance from source to destination
+		Tuple2<String, Data> destNode = network.filter(entry -> {
+			String myNode = entry._1();
+			return myNode.equals(destinationId.value());
+		}).collect().iterator().next();
+		System.err.println("from " + sourceId.value() + " to " + destNode._1() +
+				" takes distance = " + destNode._2().distance);
 
-        // stop the timer
-        long endTime = System.currentTimeMillis();
-        System.err.println("Elapsed Time: " + (endTime - startTime));
+		// stop the timer
+		long endTime = System.currentTimeMillis();
+		System.err.println("Elapsed Time: " + (endTime - startTime));
 
-    }
+	}
 }
